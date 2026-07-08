@@ -78,6 +78,11 @@ by `data/init_db.py` — never committed, it's your own personal history).
 All generated from the same fully-synthetic starting photo (`samples/sample_original.png`) —
 no real person's likeness anywhere in this repo.
 
+**Uploaded results, as seen in Immich itself** (a dedicated demo album
+containing only these synthetic samples — real screenshot, no real photos):
+
+![Immich album screenshot](samples/immich_album_screenshot.png)
+
 | Original (synthetic) | `vivid` filter | `superhero` cartoon |
 |---|---|---|
 | ![original](samples/sample_original.png) | ![vivid filter](samples/sample_filter_vivid.png) | ![superhero cartoon](samples/sample_cartoon_superhero.png) |
