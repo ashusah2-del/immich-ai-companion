@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+*.log
+output/
+
+# Generated locally by data/init_db.py - contains your own real photo/prompt
+# history once you start running workers. Never commit this.
+data/prompts.db
+
+# Full scraped prompt-library dump (data/scrape_promptplum.py output) - large
+# and easy to regenerate, no need to version it.
+data/promptplum_prompts.json
