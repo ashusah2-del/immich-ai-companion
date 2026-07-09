@@ -1,4 +1,5 @@
 import random
+import re
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -27,6 +28,25 @@ _SYNTHETIC_FILENAME_MARKERS = ("_enhanced.png", "_designed.png") + tuple(
 # A handful of assets have no real EXIF capture date and Immich fills in a
 # ~1980 epoch placeholder for fileCreatedAt - not a real "then" candidate.
 _MIN_VALID_PHOTO_YEAR = 1990
+
+# WhatsApp's own filename convention (IMG-YYYYMMDD-WAxxxx.jpg / VID-...) bakes
+# in the true send/forward date. Forwarded media routinely has no real
+# embedded EXIF capture date at all, and Immich then backfills
+# fileCreatedAt/exif.dateTimeOriginal with the *import* date instead -
+# silently mislabeling e.g. a 2016 "then" photo as a 2025 one. The filename
+# date is more trustworthy than the API-reported one whenever it's present.
+_WHATSAPP_FILENAME_RE = re.compile(r"(?:IMG|VID)-(\d{4})(\d{2})(\d{2})-WA\d+", re.IGNORECASE)
+
+
+def _whatsapp_filename_date(filename):
+    match = _WHATSAPP_FILENAME_RE.search(filename)
+    if not match:
+        return None
+    year, month, day = (int(g) for g in match.groups())
+    try:
+        return datetime(year, month, day, tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _headers():
@@ -131,7 +151,8 @@ def pick_random_images_for_people(person_ids, count, exclude_ids=None, max_attem
 
 def get_person_photo_history(person_id, exclude_ids=None, page_size=1000):
     """Fetch up to page_size real (non-synthetic) IMAGE assets of person_id, sorted
-    oldest-to-newest by fileCreatedAt.
+    oldest-to-newest by fileCreatedAt (corrected by _whatsapp_filename_date
+    where it applies).
 
     Filters to PIL-openable mime types (same reason as SUPPORTED_MIME_TYPES
     elsewhere), drops our own AI-generated uploads (see _looks_ai_generated) so a
@@ -169,6 +190,7 @@ def get_person_photo_history(person_id, exclude_ids=None, page_size=1000):
         if not created_at:
             continue
         dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        dt = _whatsapp_filename_date(asset.get("originalFileName", "")) or dt
         if dt.year < _MIN_VALID_PHOTO_YEAR:
             continue
         asset["_created_dt"] = dt

@@ -6,10 +6,11 @@ a GPU to do here.
 import math
 import random
 from collections import namedtuple
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 
-from . import frames
+from . import background_styles, frame_styles, frames
 
 BG = (235, 230, 220)
 
@@ -284,6 +285,29 @@ def retro_filmstrip(paths):
 
 
 _CAPTION_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+_FONT_DIR = Path(__file__).parent / "fonts"
+# Handwritten/display caption fonts for the then-and-now layouts, bundled in
+# app/fonts (OFL/Apache licensed - see the license files there) so they exist
+# on any machine the worker runs on, unlike system font paths. One is picked
+# per collage so both captions match. Each carries a size multiplier: script
+# faces render wildly different x-heights at the same nominal point size.
+_CAPTION_FONTS = [
+    ("Pacifico-Regular.ttf", 1.0),
+    ("PermanentMarker-Regular.ttf", 0.95),
+    ("Kalam-Bold.ttf", 1.0),
+    ("Courgette-Regular.ttf", 1.05),
+    ("GreatVibes-Regular.ttf", 1.45),
+    ("AmaticSC-Bold.ttf", 1.4),
+]
+_CAPTION_INK = (58, 46, 38)
+
+
+def _random_caption_font(base_size):
+    name, scale = random.choice(_CAPTION_FONTS)
+    path = _FONT_DIR / name
+    if path.exists():
+        return _load_font(str(path), round(base_size * scale))
+    return _load_font(_CAPTION_FONT_PATH, base_size)
 _EMOJI_FONT_PATH = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 # NotoColorEmoji ships a single embedded bitmap strike - any other requested size
 # raises "OSError: invalid pixel size" - so render at its native size and resize
@@ -329,40 +353,170 @@ def _split_caption_emoji(label):
     return label, ""
 
 
-def two_photo_captioned(paths):
-    # Two photos side by side, each with a caption drawn underneath (plus an
-    # optional mood emoji accent - see _split_caption_emoji). Generic layout
-    # reused by both the daily Collage worker's then-and-now style (captions
-    # "THEN · <year>"/"NOW · <year>", see filter_pipeline._build_then_and_now_photo)
-    # and the cartoon worker's cartoon-vs-original comparison (captions
-    # "Cartoon"/"Original", see cartoon_pipeline._build_comparison_collage).
-    # paths must be exactly 2 Photo entries carrying a `label`.
-    gutter, cell_w, cell_h, caption_h = 30, 850, 1050, 160
-    canvas_w = cell_w * 2 + gutter * 3
-    canvas_h = cell_h + caption_h + gutter * 2
-    canvas = Image.new("RGB", (canvas_w, canvas_h), (20, 20, 20))
+def _draw_caption_ink(canvas, x, y, w, h, label, font, band="bottom", gap=18):
+    """Draw label (+ optional emoji, see _split_caption_emoji) in dark
+    handwriting-style ink just *outside* the top or bottom edge of the framed
+    card whose bounding box on canvas is (x, y, w, h) - close to the frame
+    without ever covering it (or the face inside it). The background scenes
+    are all light (see app.background_styles), so the ink needs no
+    scrim/pill behind it to stay legible."""
+    if not label:
+        return
+    text, emoji = _split_caption_emoji(label)
     draw = ImageDraw.Draw(canvas)
-    text_font = _load_font(_CAPTION_FONT_PATH, 56)
+    tx1, ty1, tx2, ty2 = draw.textbbox((0, 0), text, font=font)
+    text_w, text_h = tx2 - tx1, ty2 - ty1
+    emoji_img = _render_emoji(emoji, target_size=round(text_h * 0.9)) if emoji else None
+    gap_e = round(text_h * 0.3) if emoji_img else 0
+    total_w = text_w + gap_e + (emoji_img.width if emoji_img else 0)
 
+    px = x + (w - total_w) // 2
+    py = y + h + gap if band == "bottom" else y - gap - text_h
+    px = min(max(px, 8), canvas.width - total_w - 8)
+    py = min(max(py, 8), canvas.height - text_h - 8)
+
+    draw.text((px - tx1, py - ty1), text, font=font, fill=_CAPTION_INK)
+    if emoji_img:
+        ey = py + (text_h - emoji_img.height) // 2
+        canvas.paste(emoji_img, (px + text_w + gap_e, ey), emoji_img)
+
+
+def _framed_card(photo, size, angle, skin_name, shape_name):
+    """A single photo cropped to (size, size), wrapped in a named
+    app.frame_styles skin+shape combo, then rotated by angle degrees. Returns
+    an RGBA image sized to its rotated bounding box."""
+    square = _cover(photo, size, size)
+    card = frame_styles.apply_frame(square, skin_name, shape_name)
+    return card.rotate(angle, expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
+
+
+def _flex_card_size(cell_w, cell_h, fill=0.9):
+    """How big a square crop should be so the framed card it becomes fills
+    `fill` of the *smaller* cell dimension - basing it on the larger
+    dimension (as a fixed-pixel shrink previously did) can make the square
+    wider than a narrow cell and overflow into the neighboring photo."""
+    return round(min(cell_w, cell_h) * fill)
+
+
+def _fit_card(card, max_w, max_h):
+    """Downscale a framed card if its decoration pushed it past the space its
+    cell reserves for it - some skins (drop shadows, wide polaroid borders)
+    grow a card 100px+ beyond the photo crop, which would otherwise eat the
+    strip reserved for the ink caption beside the frame."""
+    scale = min(max_w / card.width, max_h / card.height, 1.0)
+    if scale < 1.0:
+        card = card.resize((round(card.width * scale), round(card.height * scale)), Image.LANCZOS)
+    return card
+
+
+def _vertical_label(text, font, color=(35, 27, 22)):
+    """Bold text rotated 90 degrees (reads bottom-to-top), for a date/caption
+    placed in the margin beside a photo rather than overlaid on it - used by
+    the diagonal layout, which keeps captions off the photos entirely."""
+    tmp = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+    bbox = ImageDraw.Draw(tmp).textbbox((0, 0), text, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    label_img = Image.new("RGBA", (w + 10, h + 10), (0, 0, 0, 0))
+    ImageDraw.Draw(label_img).text((5 - bbox[0], 5 - bbox[1]), text, font=font, fill=color + (255,))
+    return label_img.rotate(90, expand=True, resample=Image.BICUBIC)
+
+
+# Vertical strip each two-photo cell reserves beside the card for its ink
+# caption - the card is sized/centered in what's left, so caption and frame
+# sit close together but can never overlap.
+_CAPTION_STRIP = 110
+
+
+def _two_photo_side_by_side(paths):
+    # A random app.background_styles scene behind two photos, each wrapped
+    # in the same randomly-picked app.frame_styles skin+shape (see
+    # TEMPLATES.md), cropped to a square so the shape reads correctly
+    # regardless of layout aspect (same reasoning as framed_mosaic), with a
+    # handwritten ink caption just below each frame.
+    gutter, cell_w, cell_h = 30, 850, 1050
+    canvas, _bg_name = background_styles.random_background(cell_w * 2 + gutter * 3, cell_h + gutter * 2)
+    font = _random_caption_font(64)
+    card_h = cell_h - _CAPTION_STRIP
+    size = _flex_card_size(cell_w, card_h)
+    skin_name, shape_name = frame_styles.random_frame()
     for i, photo in enumerate(paths):
         x = gutter + i * (cell_w + gutter)
-        canvas.paste(_cover(photo, cell_w, cell_h), (x, gutter))
+        card = _fit_card(_framed_card(photo, size, 0, skin_name, shape_name), cell_w, card_h)
+        fx, fy = x + (cell_w - card.width) // 2, gutter + (card_h - card.height) // 2
+        canvas.paste(card, (fx, fy), card)
+        label = photo.label if isinstance(photo, Photo) else None
+        _draw_caption_ink(canvas, fx, fy, card.width, card.height, label, font, band="bottom")
+    return canvas
+
+
+def _two_photo_stacked(paths):
+    # Same app.background_styles + app.frame_styles treatment as
+    # _two_photo_side_by_side, stacked vertically. Captions go on the outward
+    # edges (above the top card, below the bottom one) so they stay near
+    # their own frame and clear of the other photo's.
+    gutter, cell_w, cell_h = 30, 950, 750
+    canvas, _bg_name = background_styles.random_background(cell_w + gutter * 2, cell_h * 2 + gutter * 3)
+    font = _random_caption_font(64)
+    card_h = cell_h - _CAPTION_STRIP
+    size = _flex_card_size(cell_w, card_h)
+    skin_name, shape_name = frame_styles.random_frame()
+    for i, photo in enumerate(paths):
+        y = gutter + i * (cell_h + gutter)
+        band = "top" if i == 0 else "bottom"
+        card = _fit_card(_framed_card(photo, size, 0, skin_name, shape_name), cell_w, card_h)
+        fx = gutter + (cell_w - card.width) // 2
+        fy = y + (card_h - card.height) // 2 + (_CAPTION_STRIP if band == "top" else 0)
+        canvas.paste(card, (fx, fy), card)
+        label = photo.label if isinstance(photo, Photo) else None
+        _draw_caption_ink(canvas, fx, fy, card.width, card.height, label, font, band=band)
+    return canvas
+
+
+def _two_photo_diagonal(paths):
+    # Scrapbook-diary style: a random app.background_styles scene, two photos
+    # cascading diagonally at their own gentle rotation, each wrapped in the
+    # same randomly-picked app.frame_styles skin+shape (see TEMPLATES.md -
+    # any of the 50 skins can wrap any of the 10 shapes), with a bold
+    # vertical date/label in the margin beside each photo - captions never
+    # touch a photo at all in this layout, so there's no face to avoid.
+    size = 620
+    canvas_w, canvas_h = 1000, 1560
+    canvas, _bg_name = background_styles.random_background(canvas_w, canvas_h)
+    font = _random_caption_font(60)
+    skin_name, shape_name = frame_styles.random_frame()
+
+    slots = [(40, 50, -6, 760, 60), (330, 840, 5, 40, 1180)]
+    for photo, (px, py, angle, lx, ly) in zip(paths, slots):
+        card = _framed_card(photo, size, angle, skin_name, shape_name)
+        canvas.paste(card, (px, py), card)
 
         label = photo.label if isinstance(photo, Photo) and photo.label else ""
-        text, emoji = _split_caption_emoji(label)
-        caption_top = gutter + cell_h
+        text, _emoji = _split_caption_emoji(label)
+        if text:
+            label_img = _vertical_label(text.upper(), font)
+            # Wide script fonts can render a taller-than-planned rotated
+            # label - clamp so it never runs off the canvas.
+            lx = min(max(lx, 10), canvas_w - label_img.width - 10)
+            ly = min(max(ly, 10), canvas_h - label_img.height - 10)
+            canvas.paste(label_img, (lx, ly), label_img)
+    return canvas.convert("RGB")
 
-        tx1, ty1, tx2, ty2 = draw.textbbox((0, 0), text, font=text_font)
-        draw.text(
-            (x + (cell_w - (tx2 - tx1)) // 2, caption_top + 15),
-            text, font=text_font, fill=(255, 255, 255),
-        )
-        if emoji:
-            emoji_img = _render_emoji(emoji, target_size=70)
-            ex = x + (cell_w - emoji_img.width) // 2
-            ey = caption_top + 80
-            canvas.paste(emoji_img, (ex, ey), emoji_img)
-    return canvas
+
+def two_photo_captioned(paths):
+    # Two captioned photos, in one of three layouts chosen at random - side
+    # by side, stacked vertically, or cascading diagonally - on a random
+    # background scene, framed by a random skin+shape, captioned in a random
+    # handwritten font (see _CAPTION_FONTS). Captions sit in dark ink just
+    # outside their own frame's edge (or in the margin beside it, for the
+    # diagonal layout) - near the frame but never overlapping it or the
+    # face inside it. Reused by both the daily Collage
+    # worker's then-and-now style (captions "THEN · <year>"/"NOW · <year>",
+    # see filter_pipeline._build_then_and_now_photo) and the cartoon worker's
+    # cartoon-vs-original comparison (captions "Cartoon"/"Original", see
+    # cartoon_pipeline._build_comparison_collage). paths must be exactly 2
+    # Photo entries carrying a `label`.
+    layout = random.choice([_two_photo_side_by_side, _two_photo_stacked, _two_photo_diagonal])
+    return layout(paths)
 
 
 # Templates whose canvas size is computed from a hardcoded cell count, so they
@@ -376,13 +530,46 @@ FIXED_COUNT_TEMPLATES = {
     4: [grid_2x2],
     5: [mosaic_5],
 }
-# polaroid_scatter/washi_scrapbook/circle_frame/photo_booth_strip/retro_filmstrip
-# all size their canvas/grid from len(paths) directly, so they're genuinely
-# count-agnostic - the only templates that can render a 6-10 photo collage
-# (see config.COLLAGE_PHOTO_COUNT_MAX) as well as backfill more variety into
-# the smaller fixed counts above.
+def framed_mosaic(paths):
+    """Showcases app.frame_styles and app.background_styles together: every
+    photo in the collage gets the same randomly-picked skin (for a cohesive
+    set) but its own randomly-picked shape (circle, heart, hexagon, star,
+    ...), gently rotated, on a random light background scene. Each photo is
+    cropped to a square before framing so every shape (including the curved
+    ones) renders cleanly regardless of whether the source photo is portrait
+    or landscape - the crop is what adapts to the source orientation, not
+    the shape itself."""
+    n = len(paths)
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+    cell, gutter = 480, 36
+    canvas_w, canvas_h = cell * cols + gutter * (cols + 1), cell * rows + gutter * (rows + 1)
+    canvas, _bg_name = background_styles.random_background(canvas_w, canvas_h)
+
+    skin_name = random.choice(list(frame_styles.SKINS))
+    size = _flex_card_size(cell, cell)
+    for i, photo in enumerate(paths):
+        shape_name = random.choice(list(frame_styles.SHAPES))
+        square = _cover(photo, size, size)
+        framed = frame_styles.apply_frame(square, skin_name, shape_name)
+        framed = framed.rotate(
+            random.uniform(-8, 8), expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0)
+        )
+        col, row = i % cols, i // cols
+        x = gutter + col * (cell + gutter) + (cell - framed.width) // 2
+        y = gutter + row * (cell + gutter) + (cell - framed.height) // 2
+        canvas.paste(framed, (x, y), framed)
+    return canvas.convert("RGB")
+
+
+# polaroid_scatter/washi_scrapbook/circle_frame/photo_booth_strip/retro_filmstrip/
+# framed_mosaic all size their canvas/grid from len(paths) directly, so they're
+# genuinely count-agnostic - the only templates that can render a 6-10 photo
+# collage (see config.COLLAGE_PHOTO_COUNT_MAX) as well as backfill more variety
+# into the smaller fixed counts above.
 FLEXIBLE_TEMPLATES = [
     polaroid_scatter, washi_scrapbook, circle_frame, photo_booth_strip, retro_filmstrip,
+    framed_mosaic,
 ]
 
 
