@@ -145,6 +145,23 @@ def _build_design_workflow(image_name, prompt_text, seed, output_megapixels,
                 "console_log_level": 1,
             },
         }
+        if config.DESIGN_FACE_BOOST:
+            # inswapper_128 swaps at 128x128, so the pasted face comes out
+            # soft/plasticky at photo resolution. FaceBoost restores and
+            # upscales the swapped face *before* it's pasted back, which is
+            # where most of the "distorted/waxy face" complaints came from.
+            workflow["17"] = {
+                "class_type": "ReActorFaceBoost",
+                "inputs": {
+                    "enabled": True,
+                    "boost_model": config.DESIGN_FACE_BOOST_MODEL,
+                    "interpolation": "Lanczos",
+                    "visibility": 1.0,
+                    "codeformer_weight": config.DESIGN_CODEFORMER_WEIGHT,
+                    "restore_with_main_after": False,
+                },
+            }
+            workflow["16"]["inputs"]["face_boost"] = ["17", 0]
         workflow["14"]["inputs"]["image"] = ["16", 0]
 
     return workflow

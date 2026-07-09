@@ -50,7 +50,11 @@ def process_asset(asset, album_id):
         print(f"[{asset_id}] running ComfyUI {style_name} generation...")
         output_bytes = comfyui_client.design_image(
             original_bytes, filename, prompt_text,
-            preserve_identity=False,
+            # Styles that render a realistic/3D face (see STYLE_PRESETS) opt in
+            # to the ReActor swap so the person stays recognizable; flat 2D
+            # styles keep the stylized face - a real face pasted on an anime
+            # drawing looks wrong.
+            preserve_identity=style.get("preserve_identity", False),
             denoise_base=style.get("denoise_base", config.CARTOON_DENOISE_BASE),
             denoise_refiner=style.get("denoise_refiner", config.CARTOON_DENOISE_REFINER),
         )

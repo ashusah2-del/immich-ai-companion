@@ -11,6 +11,25 @@ for superhero) are based on documented prompt conventions for each style, not gu
 """
 
 STYLE_PRESETS = {
+    "portrait_3d": {
+        "description": (
+            "Stylized 3D-render portrait that keeps the person's real, natural "
+            "face (ReActor swap) - a 'you, but as a 3D character' look, closest "
+            "to the original photo of any style here."
+        ),
+        "style_prompt": (
+            "stylized 3D render of the same person and scene, Pixar-style CGI "
+            "portrait, natural realistic facial features and proportions, soft "
+            "studio lighting, subsurface scattering skin, detailed eyes, "
+            "cinematic depth of field, high quality octane render"
+        ),
+        # Real face gets swapped back in (with FaceBoost) - so denoise can sit
+        # in the middle: strong enough that everything reads as a 3D render,
+        # low enough that pose/scene still match the inspiring photo.
+        "preserve_identity": True,
+        "denoise_base": 0.5,
+        "denoise_refiner": 0.25,
+    },
     "cartoon_3d": {
         "description": "3D Pixar/Disney-style animated cartoon - good for a warm, family-friendly whimsical look.",
         "style_prompt": (
@@ -112,6 +131,9 @@ STYLE_PRESETS = {
             "base beneath the feet, studio product photography lighting, "
             "photorealistic render, 8K detail"
         ),
+        # Photorealistic material, so the real face fits - swap it back in
+        # rather than accepting whatever face the toy-sculpt render invents.
+        "preserve_identity": True,
     },
     "funko_pop": {
         "description": "Funko Pop vinyl bobblehead figure style - good for a cute, big-head collectible toy look.",

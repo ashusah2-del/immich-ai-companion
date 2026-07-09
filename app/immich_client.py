@@ -21,7 +21,7 @@ SUPPORTED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 # db-only exclusion list misses that second copy - filtering by filename shape
 # catches both, independent of our own bookkeeping. Used to keep our own outputs
 # out of "then and now" candidate pools (see get_person_photo_history).
-_SYNTHETIC_FILENAME_MARKERS = ("_enhanced.png", "_designed.png") + tuple(
+_SYNTHETIC_FILENAME_MARKERS = ("_enhanced.png", "_designed.png", "_compare.png") + tuple(
     f"_{name}.png" for name in list(filters.FILTER_PRESETS) + list(cartoon_styles.STYLE_PRESETS)
 )
 

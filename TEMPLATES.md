@@ -54,6 +54,7 @@ developing a favorite.
 
 | Style | Description |
 |---|---|
+| `portrait_3d` | Stylized Pixar-style 3D render that keeps the person's real, natural face (identity-preserving swap) - the closest-to-the-original style. |
 | `anime` | Japanese anime/manga style - expressive portraits, dynamic poses. |
 | `cartoon_3d` | 3D Pixar/Disney-style animated cartoon - warm, family-friendly, whimsical. |
 | `disney_2d` | Classic hand-drawn 2D Disney animated-film style - storybook, fairy-tale look. |
@@ -62,9 +63,16 @@ developing a favorite.
 | `minecraft` | Minecraft video-game blocky voxel style - fun, playful, gamer-kid look. |
 | `lego` | LEGO minifigure style - playful, blocky toy-like look. |
 | `funko_pop` | Funko Pop vinyl bobblehead figure style - cute, big-head collectible toy look. |
-| `figurine_3d` | Photorealistic 3D collectible action-figure material - the "3D printed figure" trend. |
+| `figurine_3d` | Photorealistic 3D collectible action-figure material - the "3D printed figure" trend. Keeps the real face (identity-preserving swap). |
 | `claymation` | Stop-motion claymation style - warm, handcrafted, nostalgic look. |
 | `retro_film` | Vintage 1950s Hollywood film-noir look with a physical filmstrip border. |
+
+Styles that render a realistic or 3D face (`portrait_3d`, `figurine_3d`) swap
+the person's real face back in via ReActor with FaceBoost (the swapped face is
+restored and upscaled *before* pasting, since the swap model works at 128px);
+flat 2D styles keep the fully stylized face on purpose. The prompt composer
+always describes the subject(s) first - count, age, gender, outfit - so the
+person stays the focus of the generated scene.
 
 After the transformation, the worker also builds a cartoon-vs-original
 comparison using the `two_photo_captioned` collage system below (captions

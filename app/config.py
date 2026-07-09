@@ -64,10 +64,20 @@ DESIGN_IMAGES_PER_DAY = int(os.environ.get("AIENH_DESIGN_IMAGES_PER_DAY", "2"))
 # Face-swap settings for the design worker (kept separate from the restore worker's
 # COMFYUI_FACE* settings above, since tuning one shouldn't risk affecting the other).
 DESIGN_SWAP_MODEL = os.environ.get("AIENH_DESIGN_SWAP_MODEL", "inswapper_128.onnx")
-DESIGN_FACEDETECTION = os.environ.get("AIENH_DESIGN_FACEDETECTION", "YOLOv5l")
+# retinaface_resnet50 aligns faces noticeably better than YOLOv5l (ReActor's
+# own recommendation) - misalignment was one source of distorted swaps.
+DESIGN_FACEDETECTION = os.environ.get("AIENH_DESIGN_FACEDETECTION", "retinaface_resnet50")
 DESIGN_FACERESTORE_MODEL = os.environ.get("AIENH_DESIGN_FACERESTORE_MODEL", "codeformer.pth")
 DESIGN_FACE_RESTORE_VISIBILITY = float(os.environ.get("AIENH_DESIGN_FACE_RESTORE_VISIBILITY", "1.0"))
-DESIGN_CODEFORMER_WEIGHT = float(os.environ.get("AIENH_DESIGN_CODEFORMER_WEIGHT", "0.5"))
+# CodeFormer weight: higher = more fidelity to the swapped-in (real) face,
+# lower = more hallucinated "beautification". 0.5 drifted identity; ReActor
+# docs recommend ~0.75.
+DESIGN_CODEFORMER_WEIGHT = float(os.environ.get("AIENH_DESIGN_CODEFORMER_WEIGHT", "0.75"))
+# Restore+upscale the swapped face BEFORE pasting it back (ReActorFaceBoost) -
+# inswapper_128 works at 128px, so without this the pasted face is soft and
+# waxy at photo resolution.
+DESIGN_FACE_BOOST = os.environ.get("AIENH_DESIGN_FACE_BOOST", "true").lower() in ("1", "true", "yes")
+DESIGN_FACE_BOOST_MODEL = os.environ.get("AIENH_DESIGN_FACE_BOOST_MODEL", "GFPGANv1.4.pth")
 
 # --- Filter worker: Google Photos-style color-grade presets, chosen via Ollama and
 # applied via ComfyUI's built-in image nodes. ---
