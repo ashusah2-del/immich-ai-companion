@@ -73,6 +73,10 @@ Every worker scopes itself to a configurable list of Immich-tagged people
 records what it did in a local SQLite database (`data/prompts.db`, created
 by `data/init_db.py` — never committed, it's your own personal history).
 
+See **[TEMPLATES.md](TEMPLATES.md)** for the full list of every collage
+layout, cartoon style, and filter preset actually available, with a
+one-line description of each.
+
 ## Samples
 
 All generated from the same fully-synthetic starting photo (`samples/sample_original.png`) —
