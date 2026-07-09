@@ -26,6 +26,8 @@ based on how many photos are available (a random count between
 | `retro_filmstrip` | any | Sepia-toned horizontal filmstrip bordered top and bottom by sprocket-hole bars, like a physical cut of 35mm film. |
 | `two_photo_captioned` | 2 | Used for the "then and now" style and the cartoon-vs-original comparison - see below, it's its own mini-system. |
 
+![retro_filmstrip sample](samples/sample_retro_filmstrip.png)
+
 All templates use face-aware cropping (`_crop_to_face` in `app/collage.py`) -
 photos zoom in on the recognized subject's face rather than a blind center
 crop, so heads don't get cut off and faces aren't tiny.
@@ -44,6 +46,8 @@ layout, which keeps captions off the photos entirely.
 | Side by side | Two photos left/right, each captioned on whichever edge (top/bottom) is farthest from the face. |
 | Stacked | Two photos top/bottom instead of left/right, same face-aware caption placement. |
 | Diagonal | Scrapbook-diary style: warm textured paper background, both photos get a white polaroid-style border and their own gentle rotation, cascading diagonally with a bold vertical date/label in the margin beside each one. |
+
+![diagonal then-and-now sample](samples/sample_then_now_diagonal.png)
 
 Used by:
 - **Collage worker's "then and now" style** - captions `"THEN · <year>"` /
