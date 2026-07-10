@@ -53,7 +53,13 @@ def _headers():
     return {"x-api-key": config.IMMICH_API_KEY}
 
 
+_VERSION_SUFFIX_RE = re.compile(r"_v\d+(?=\.[a-z]+$)", re.IGNORECASE)
+
+
 def _looks_ai_generated(filename):
+    # Versioned re-uploads (e.g. foo_designed_v2.png) must match the same
+    # markers as the unversioned name - strip the _vN before testing.
+    filename = _VERSION_SUFFIX_RE.sub("", filename)
     fn = filename.lower()
     return fn.startswith("collage_") or fn.endswith(_SYNTHETIC_FILENAME_MARKERS)
 

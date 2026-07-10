@@ -23,12 +23,10 @@ BG = (235, 230, 220)
 Photo = namedtuple("Photo", ["path", "face_box", "label"], defaults=[None])
 
 
-def _crop_to_face(img, w, h, face_box, target_face_frac=0.34):
-    """Crop+zoom the already-oriented `img` to (w, h), centered and zoomed on
-    face_box, instead of _cover's resize-whole-photo-then-crop. Sized so the
-    face(s) fill about target_face_frac of the block's height, with a bit
-    more headroom above (forehead/hair) than below (chin/shoulders)."""
-    src_w, src_h = img.size
+def _face_crop_rect(src_w, src_h, w, h, face_box, target_face_frac=0.34):
+    """The (left, top, crop_w, crop_h) source rect _crop_to_face will cut for
+    a (w, h) target - pure math, shared with _shape_fits_faces so shape
+    compatibility can be predicted without rendering anything."""
     x1, y1, x2, y2 = face_box
     fx1, fy1, fx2, fy2 = x1 * src_w, y1 * src_h, x2 * src_w, y2 * src_h
     face_cx, face_cy = (fx1 + fx2) / 2, (fy1 + fy2) / 2
@@ -58,7 +56,16 @@ def _crop_to_face(img, w, h, face_box, target_face_frac=0.34):
 
     left = min(max(face_cx - crop_w / 2, 0), src_w - crop_w)
     top = min(max(face_cy - crop_h * 0.42, 0), src_h - crop_h)
+    return left, top, crop_w, crop_h
 
+
+def _crop_to_face(img, w, h, face_box):
+    """Crop+zoom the already-oriented `img` to (w, h), centered and zoomed on
+    face_box, instead of _cover's resize-whole-photo-then-crop. Sized so the
+    face(s) fill about a third of the block's height, with a bit more
+    headroom above (forehead/hair) than below (chin/shoulders)."""
+    src_w, src_h = img.size
+    left, top, crop_w, crop_h = _face_crop_rect(src_w, src_h, w, h, face_box)
     crop = img.crop((round(left), round(top), round(left + crop_w), round(top + crop_h)))
     return crop.resize((round(w), round(h)), Image.LANCZOS)
 
@@ -397,6 +404,56 @@ def _draw_caption_ink(canvas, x, y, w, h, label, font, band="bottom", gap=18):
         canvas.paste(emoji_img, (px + text_w + gap_e, ey), emoji_img)
 
 
+# Central fraction of a square card guaranteed to be inside each
+# frame_styles shape silhouette (width, height) - conservative "safe boxes"
+# for checking whether a photo's recognized faces survive the shape's
+# cutaway. rounded_rect keeps nearly everything; a star keeps very little.
+_SHAPE_SAFE_FRAC = {
+    "rectangle": (0.96, 0.96),
+    "rounded_rect": (0.9, 0.9),
+    "circle": (0.7, 0.7),
+    "oval": (0.7, 0.6),
+    "hexagon": (0.7, 0.85),
+    "octagon": (0.8, 0.8),
+    "diamond": (0.55, 0.55),
+    "arch": (0.85, 0.8),
+    "heart": (0.6, 0.5),
+    "star": (0.42, 0.42),
+}
+
+
+def _shape_fits_faces(photo, shape_name):
+    """Whether every recognized face survives shape_name's silhouette: predict
+    where the face union lands inside the square crop (_face_crop_rect - no
+    rendering needed) and require it inside the shape's safe box. Photos
+    without face data fit anything."""
+    if not isinstance(photo, Photo) or photo.face_box is None:
+        return True
+    with Image.open(photo.path) as img:
+        img = ImageOps.exif_transpose(img)
+        src_w, src_h = img.size
+    left, top, crop_w, crop_h = _face_crop_rect(src_w, src_h, 1, 1, photo.face_box)
+    x1, y1, x2, y2 = photo.face_box
+    fx1 = (x1 * src_w - left) / crop_w
+    fy1 = (y1 * src_h - top) / crop_h
+    fx2 = (x2 * src_w - left) / crop_w
+    fy2 = (y2 * src_h - top) / crop_h
+    safe_w, safe_h = _SHAPE_SAFE_FRAC.get(shape_name, (0.6, 0.6))
+    return (fx1 >= 0.5 - safe_w / 2 and fx2 <= 0.5 + safe_w / 2
+            and fy1 >= 0.5 - safe_h / 2 and fy2 <= 0.5 + safe_h / 2)
+
+
+def _fitting_shape(photos, shape_name, tries=8):
+    """Return shape_name if every photo's faces fit it, else re-roll ("if the
+    image is not compatible with the frame, change the frame") - falling back
+    to rounded_rect, whose safe box fits any face-centered crop."""
+    for _ in range(tries):
+        if all(_shape_fits_faces(p, shape_name) for p in photos):
+            return shape_name
+        shape_name = random.choice(list(frame_styles.SHAPES))
+    return "rounded_rect"
+
+
 def _framed_card(photo, size, angle, skin_name, shape_name):
     """A single photo cropped to (size, size), wrapped in a named
     app.frame_styles skin+shape combo, then rotated by angle degrees. Returns
@@ -455,6 +512,7 @@ def _two_photo_side_by_side(paths):
     card_h = cell_h - _CAPTION_STRIP
     size = _flex_card_size(cell_w, card_h)
     skin_name, shape_name = frame_styles.random_frame()
+    shape_name = _fitting_shape(paths, shape_name)
     for i, photo in enumerate(paths):
         x = gutter + i * (cell_w + gutter)
         card = _fit_card(_framed_card(photo, size, 0, skin_name, shape_name), cell_w, card_h)
@@ -476,6 +534,7 @@ def _two_photo_stacked(paths):
     card_h = cell_h - _CAPTION_STRIP
     size = _flex_card_size(cell_w, card_h)
     skin_name, shape_name = frame_styles.random_frame()
+    shape_name = _fitting_shape(paths, shape_name)
     for i, photo in enumerate(paths):
         y = gutter + i * (cell_h + gutter)
         band = "top" if i == 0 else "bottom"
@@ -500,6 +559,7 @@ def _two_photo_diagonal(paths):
     canvas, _bg_name = background_styles.random_background(canvas_w, canvas_h)
     font = _random_caption_font(60)
     skin_name, shape_name = frame_styles.random_frame()
+    shape_name = _fitting_shape(paths, shape_name)
 
     slots = [(40, 50, -6, 760, 60), (330, 840, 5, 40, 1180)]
     for photo, (px, py, angle, lx, ly) in zip(paths, slots):
@@ -565,7 +625,7 @@ def framed_mosaic(paths):
     skin_name = random.choice(list(frame_styles.SKINS))
     size = _flex_card_size(cell, cell)
     for i, photo in enumerate(paths):
-        shape_name = random.choice(list(frame_styles.SHAPES))
+        shape_name = _fitting_shape([photo], random.choice(list(frame_styles.SHAPES)))
         square = _cover(photo, size, size)
         framed = frame_styles.apply_frame(square, skin_name, shape_name)
         framed = framed.rotate(

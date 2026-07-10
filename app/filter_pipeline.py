@@ -252,11 +252,18 @@ def _pick_sharpest(candidates, person_id, pool_size):
     return best
 
 
-def _build_then_and_now_photo(asset, path, face_box, tag):
+def _build_then_and_now_photo(asset, path, tag):
     label = f"{tag} · {asset['_created_dt'].year}"
     if config.COLLAGE_THEN_AND_NOW_EMOJI:
         label = f"{label} {ollama_client.select_mood_emoji(path)}"
-    return collage.Photo(path, face_box, label)
+    # Crop on the union of every recognized face (no person_id), not just the
+    # subject's own - in a group shot (e.g. mum holding the child) the
+    # person-scoped box centered one face and let the shape silhouette clip
+    # whoever stood beside them. The union is safe now that _crop_to_face
+    # sizes the crop from the box itself: nobody inside it can be cropped
+    # out. The person-scoped box is still what _pick_sharpest scores/checks -
+    # sharpness and uprightness are about the subject specifically.
+    return collage.Photo(path, immich_client.get_face_box(asset["id"]), label)
 
 
 def _try_build_then_and_now(album_id, person_ids_by_name):
@@ -309,8 +316,8 @@ def _try_build_then_and_now(album_id, person_ids_by_name):
                 f"(sharpness then={then_score:.0f} now={now_score:.0f})..."
             )
             photos_for_collage = [
-                _build_then_and_now_photo(then_asset, then_path, then_face_box, "THEN"),
-                _build_then_and_now_photo(now_asset, now_path, now_face_box, "NOW"),
+                _build_then_and_now_photo(then_asset, then_path, "THEN"),
+                _build_then_and_now_photo(now_asset, now_path, "NOW"),
             ]
             image, template_name = collage.build_collage(photos_for_collage)
             gap_days = (now_asset["_created_dt"] - then_asset["_created_dt"]).days
