@@ -48,15 +48,17 @@ def process_asset(asset, album_id):
         print(f"[{asset_id}] composed prompt: {prompt_text!r}")
 
         print(f"[{asset_id}] running ComfyUI {style_name} generation...")
+        preserve_identity = style.get("preserve_identity", False)
         output_bytes = comfyui_client.design_image(
             original_bytes, filename, prompt_text,
             # Styles that render a realistic/3D face (see STYLE_PRESETS) opt in
-            # to the ReActor swap so the person stays recognizable; flat 2D
-            # styles keep the stylized face - a real face pasted on an anime
-            # drawing looks wrong.
-            preserve_identity=style.get("preserve_identity", False),
+            # to the ReActor swap + face shielding so the person stays
+            # recognizable; flat 2D styles keep the stylized face - a real
+            # face pasted on an anime drawing looks wrong.
+            preserve_identity=preserve_identity,
             denoise_base=style.get("denoise_base", config.CARTOON_DENOISE_BASE),
             denoise_refiner=style.get("denoise_refiner", config.CARTOON_DENOISE_REFINER),
+            face_boxes=immich_client.get_all_face_boxes(asset_id) if preserve_identity else None,
         )
 
         if style.get("post_process"):

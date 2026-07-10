@@ -224,7 +224,7 @@ def _pick_sharpest(candidates, person_id, pool_size):
     if not candidates:
         return None
     pool = candidates if len(candidates) <= pool_size else random.sample(candidates, pool_size)
-    best = None
+    scored = []
     for asset in pool:
         face_box = immich_client.get_face_box(asset["id"], person_id=person_id)
         if face_box is None or not _face_box_is_upright(face_box):
@@ -233,12 +233,22 @@ def _pick_sharpest(candidates, person_id, pool_size):
         if score < config.COLLAGE_THEN_AND_NOW_MIN_SHARPNESS:
             os.remove(path)
             continue
-        if best is None or score > best[3]:
-            if best is not None:
-                os.remove(best[1])
-            best = (asset, path, face_box, score)
-        else:
-            os.remove(path)
+        scored.append((asset, path, face_box, score))
+
+    # Sharpest first, but vision-gate the winner: Immich face recognition
+    # matches the headshot printed on ID cards, so a photographed driving
+    # licence can outscore real photos on sharpness. Check at most the top 3
+    # (each check is an Ollama call); if all of those look like documents,
+    # treat the pool as unusable rather than settling.
+    scored.sort(key=lambda entry: entry[3], reverse=True)
+    best = None
+    for i, entry in enumerate(scored):
+        if best is None and i < 3:
+            if ollama_client.is_regular_photo(entry[1]):
+                best = entry
+                continue
+            print(f"  skipping {entry[0]['originalFileName']}: looks like a document/screenshot")
+        os.remove(entry[1])
     return best
 
 
@@ -281,7 +291,11 @@ def _try_build_then_and_now(album_id, person_ids_by_name):
             and (now_asset["_created_dt"] - p["_created_dt"]).days
             >= config.COLLAGE_THEN_AND_NOW_MIN_GAP_DAYS
         ]
-        then_pick = _pick_sharpest(then_candidates, person_id, pool_size)
+        # photos is sorted oldest-to-newest, so slicing the front biases the
+        # "then" pool to the OLDEST qualifying shots - a random sample tended
+        # to pick something just past the minimum gap, which reads as "two of
+        # the same photo" rather than a passage-of-time comparison.
+        then_pick = _pick_sharpest(then_candidates[:pool_size], person_id, pool_size)
         if then_pick is None:
             os.remove(now_path)
             continue

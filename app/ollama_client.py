@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import re
 
@@ -29,8 +30,20 @@ def _chat(image_b64, prompt_text, options=None):
 
 
 def _load_image_b64(image_path):
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("ascii")
+    """EXIF-upright, downscale to <=1024px, and re-encode as JPEG before
+    base64ing. Raw phone photos are 3-5MB and sometimes stored rotated:
+    oversized payloads intermittently 400 at the Ollama API, and a sideways
+    image measurably degrades the vision model's judgment (a rotated selfie
+    got classified as a document). Every vision call benefits, and smaller
+    payloads are faster over the LAN too."""
+    from PIL import Image, ImageOps
+
+    with Image.open(image_path) as img:
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        img.thumbnail((1024, 1024), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def _extract_id(text, valid_ids):
@@ -138,6 +151,30 @@ def compose_character_prompt(image_path, style_name):
     if len(reply) < 15:
         return style["style_prompt"]
     return reply
+
+
+def is_regular_photo(image_path):
+    """Vision-check that this is a normal photograph of a person/people - not
+    a photo of a document (ID card, licence, certificate, paper), a
+    screenshot, or a photo of a screen. Immich face recognition happily
+    matches the headshot printed on an ID card, which otherwise lets e.g. a
+    driving licence into a then-and-now collage. Fails open (True) on any
+    Ollama error - a missing gate should never block the worker."""
+    try:
+        image_b64 = _load_image_b64(image_path)
+        reply = _chat(
+            image_b64,
+            "Look at this image. Reply 'no' ONLY if it is clearly a document, "
+            "ID card, driving licence, passport, certificate, piece of paper, "
+            "screenshot, or a photo of a screen/monitor. For any regular "
+            "photograph of a person, people, or scene - even a blurry or "
+            "imperfect one - reply 'yes'. Reply with exactly one word: yes or no.",
+            options={"temperature": 0.0},
+        ).strip().lower()
+        return reply.startswith("y")
+    except Exception as e:
+        print(f"is_regular_photo check failed ({e}), allowing photo")
+        return True
 
 
 def select_best_filter(image_path):

@@ -78,6 +78,17 @@ DESIGN_CODEFORMER_WEIGHT = float(os.environ.get("AIENH_DESIGN_CODEFORMER_WEIGHT"
 # waxy at photo resolution.
 DESIGN_FACE_BOOST = os.environ.get("AIENH_DESIGN_FACE_BOOST", "true").lower() in ("1", "true", "yes")
 DESIGN_FACE_BOOST_MODEL = os.environ.get("AIENH_DESIGN_FACE_BOOST_MODEL", "GFPGANv1.4.pth")
+# Shield every Immich-detected face region from SDXL denoising entirely
+# (latent noise mask, see comfyui_client._face_shield_mask_bytes) so faces
+# keep their original photographic features while the rest restyles - the
+# ReActor swap alone couldn't preserve likeness for every person in a group
+# photo.
+DESIGN_PROTECT_FACES = os.environ.get("AIENH_DESIGN_PROTECT_FACES", "true").lower() in ("1", "true", "yes")
+# How much each face box grows before masking (fraction of the box's own
+# width/height per side) and how far the mask edge feathers (px at 1024px
+# mask scale) so shielded faces blend into the restyled surroundings.
+DESIGN_FACE_MASK_GROW = float(os.environ.get("AIENH_DESIGN_FACE_MASK_GROW", "0.3"))
+DESIGN_FACE_MASK_FEATHER = float(os.environ.get("AIENH_DESIGN_FACE_MASK_FEATHER", "24"))
 
 # --- Filter worker: Google Photos-style color-grade presets, chosen via Ollama and
 # applied via ComfyUI's built-in image nodes. ---
@@ -108,10 +119,11 @@ COLLAGE_IMMICH_ALBUM_NAME = os.environ.get("AIENH_COLLAGE_IMMICH_ALBUM_NAME", "A
 COLLAGE_THEN_AND_NOW_PROBABILITY = float(
     os.environ.get("AIENH_COLLAGE_THEN_AND_NOW_PROBABILITY", "0.2")
 )
-# Minimum days between a person's oldest and newest available real photo for a
-# then-and-now pair to count as valid (~6 months).
+# Minimum days between the "then" and "now" photo for a pair to count as
+# valid (~3 years). 6 months proved too little - both photos read as "the
+# same picture" with no visible passage of time.
 COLLAGE_THEN_AND_NOW_MIN_GAP_DAYS = int(
-    os.environ.get("AIENH_COLLAGE_THEN_AND_NOW_MIN_GAP_DAYS", "183")
+    os.environ.get("AIENH_COLLAGE_THEN_AND_NOW_MIN_GAP_DAYS", "1095")
 )
 # Accent each then-and-now caption with a mood-appropriate emoji (Ollama vision pick).
 COLLAGE_THEN_AND_NOW_EMOJI = os.environ.get(

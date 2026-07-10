@@ -4,7 +4,7 @@ import time
 import uuid
 
 import requests
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from . import config, filters
 
@@ -56,8 +56,40 @@ def _build_workflow(image_name, output_megapixels):
     }
 
 
+def _face_shield_mask_bytes(image_bytes, face_boxes):
+    """Render a latent noise mask (PNG bytes) that shields face regions from
+    SDXL denoising: white = restyle freely, black = keep the original pixels.
+    Each Immich face box is grown by DESIGN_FACE_MASK_GROW and drawn as a
+    filled ellipse, then the whole mask is Gaussian-blurred so the shielded
+    face blends into the restyled surroundings instead of ending at a hard
+    seam. Built at <=1024px on the long side - SetLatentNoiseMask rescales
+    to the latent resolution anyway."""
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        img = ImageOps.exif_transpose(img)
+        w, h = img.size
+    scale = min(1024 / max(w, h), 1.0)
+    mw, mh = round(w * scale), round(h * scale)
+    mask = Image.new("L", (mw, mh), 255)
+    draw = ImageDraw.Draw(mask)
+    for x1, y1, x2, y2 in face_boxes:
+        gx = (x2 - x1) * config.DESIGN_FACE_MASK_GROW
+        gy = (y2 - y1) * config.DESIGN_FACE_MASK_GROW
+        draw.ellipse(
+            (
+                (x1 - gx) * mw, (y1 - gy) * mh,
+                (x2 + gx) * mw, (y2 + gy) * mh,
+            ),
+            fill=0,
+        )
+    mask = mask.filter(ImageFilter.GaussianBlur(config.DESIGN_FACE_MASK_FEATHER * scale))
+    buf = io.BytesIO()
+    mask.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _build_design_workflow(image_name, prompt_text, seed, output_megapixels,
-                            preserve_identity=True, denoise_base=None, denoise_refiner=None):
+                            preserve_identity=True, denoise_base=None, denoise_refiner=None,
+                            mask_name=None):
     negative = config.DESIGN_NEGATIVE_PROMPT
     denoise_base = config.DESIGN_DENOISE_BASE if denoise_base is None else denoise_base
     denoise_refiner = config.DESIGN_DENOISE_REFINER if denoise_refiner is None else denoise_refiner
@@ -75,6 +107,7 @@ def _build_design_workflow(image_name, prompt_text, seed, output_megapixels,
             },
         },
         "4": {"class_type": "VAEEncode", "inputs": {"pixels": ["13", 0], "vae": ["1", 2]}},
+        # nodes 20-23 (face shield) are appended below when mask_name is given
         "5": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt_text, "clip": ["1", 1]}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["1", 1]}},
         "7": {
@@ -126,9 +159,44 @@ def _build_design_workflow(image_name, prompt_text, seed, output_megapixels,
         "12": {"class_type": "SaveImage", "inputs": {"images": ["14", 0], "filename_prefix": "aidesign"}},
     }
 
+    if mask_name:
+        # Shield face regions from denoising in BOTH samplers (the mask is
+        # re-attached after the base pass since it shouldn't be assumed to
+        # survive through a KSampler's output latent): black mask areas keep
+        # the original photographic face pixels, white restyles freely.
+        workflow["20"] = {"class_type": "LoadImage", "inputs": {"image": mask_name}}
+        workflow["21"] = {"class_type": "ImageToMask", "inputs": {"image": ["20", 0], "channel": "red"}}
+        workflow["22"] = {
+            "class_type": "SetLatentNoiseMask",
+            "inputs": {"samples": ["4", 0], "mask": ["21", 0]},
+        }
+        workflow["7"]["inputs"]["latent_image"] = ["22", 0]
+        workflow["23"] = {
+            "class_type": "SetLatentNoiseMask",
+            "inputs": {"samples": ["7", 0], "mask": ["21", 0]},
+        }
+        workflow["10"]["inputs"]["latent_image"] = ["23", 0]
+
     if preserve_identity:
+        # Swap EVERY face back (up to 8), paired by left-right position on
+        # both sides - the old single-index swap left all but one face
+        # AI-redrawn in group photos, and even that one was paired with
+        # whichever source face happened to be detected first.
+        workflow["18"] = {
+            "class_type": "ReActorOptions",
+            "inputs": {
+                "input_faces_order": "left-right",
+                "input_faces_index": "0,1,2,3,4,5,6,7",
+                "detect_gender_input": "no",
+                "source_faces_order": "left-right",
+                "source_faces_index": "0,1,2,3,4,5,6,7",
+                "detect_gender_source": "no",
+                "console_log_level": 1,
+                "restore_swapped_only": True,
+            },
+        }
         workflow["16"] = {
-            "class_type": "ReActorFaceSwap",
+            "class_type": "ReActorFaceSwapOpt",
             "inputs": {
                 "enabled": True,
                 "input_image": ["11", 0],
@@ -138,11 +206,7 @@ def _build_design_workflow(image_name, prompt_text, seed, output_megapixels,
                 "face_restore_model": config.DESIGN_FACERESTORE_MODEL,
                 "face_restore_visibility": config.DESIGN_FACE_RESTORE_VISIBILITY,
                 "codeformer_weight": config.DESIGN_CODEFORMER_WEIGHT,
-                "detect_gender_input": "no",
-                "detect_gender_source": "no",
-                "input_faces_index": "0",
-                "source_faces_index": "0",
-                "console_log_level": 1,
+                "options": ["18", 0],
             },
         }
         if config.DESIGN_FACE_BOOST:
@@ -241,7 +305,8 @@ def enhance_image(image_bytes, filename):
 
 
 def design_image(image_bytes, filename, prompt_text, seed=None,
-                  preserve_identity=True, denoise_base=None, denoise_refiner=None):
+                  preserve_identity=True, denoise_base=None, denoise_refiner=None,
+                  face_boxes=None):
     """Run the SDXL base+refiner img2img workflow, creatively restyling the photo per prompt_text.
 
     Unlike enhance_image, this is a stylistic reimagining (high denoise) and
@@ -252,13 +317,24 @@ def design_image(image_bytes, filename, prompt_text, seed=None,
     should be stylized (e.g. cartoonizing) - the ReActor step is skipped entirely.
     denoise_base/denoise_refiner override config.DESIGN_DENOISE_* when a style needs a
     stronger (or weaker) transformation than the identity-preserving default.
+
+    face_boxes (list of 0-1 fraction (x1, y1, x2, y2), see
+    immich_client.get_all_face_boxes) additionally shields those regions from
+    denoising entirely (see _face_shield_mask_bytes) so every face keeps its
+    original photographic features - only honored alongside preserve_identity,
+    since a stylized-face run wants faces repainted.
     """
     seed = seed if seed is not None else uuid.uuid4().int & 0xFFFFFFFF
     output_megapixels = _megapixels(image_bytes)
     image_name = _upload_image(image_bytes, filename)
+    mask_name = None
+    if preserve_identity and face_boxes and config.DESIGN_PROTECT_FACES:
+        mask_bytes = _face_shield_mask_bytes(image_bytes, face_boxes)
+        mask_name = _upload_image(mask_bytes, f"shield_{os.path.splitext(filename)[0]}.png")
     workflow = _build_design_workflow(
         image_name, prompt_text, seed, output_megapixels,
         preserve_identity=preserve_identity, denoise_base=denoise_base, denoise_refiner=denoise_refiner,
+        mask_name=mask_name,
     )
     client_id = str(uuid.uuid4())
     prompt_id = _queue_prompt(workflow, client_id)

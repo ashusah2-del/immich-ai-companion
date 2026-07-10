@@ -20,7 +20,10 @@ def process_asset(asset, album_id):
         print(f"[{asset_id}] chosen prompt: {prompt['title']!r} ({prompt['category']})")
 
         print(f"[{asset_id}] running ComfyUI design generation...")
-        output_bytes = comfyui_client.design_image(original_bytes, filename, prompt["prompt_text"])
+        output_bytes = comfyui_client.design_image(
+            original_bytes, filename, prompt["prompt_text"],
+            face_boxes=immich_client.get_all_face_boxes(asset_id),
+        )
 
         out_dir = os.path.join(config.OUTPUT_DIR, config.DESIGN_OUTPUT_SUBDIR)
         os.makedirs(out_dir, exist_ok=True)

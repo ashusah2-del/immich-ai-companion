@@ -97,7 +97,8 @@ STYLE_PRESETS = {
     "lego": {
         "description": "LEGO minifigure style - good for a playful, blocky toy-like look.",
         "style_prompt": (
-            "LEGO minifigure character, cylindrical yellow-toned head with simple "
+            "LEGO minifigure character, cylindrical head matching the subject's "
+            "real skin tone with simple "
             "printed facial features, blocky plastic-textured body and articulated "
             "limbs, glossy plastic minifigure look, standing in a LEGO brick-built "
             "environment, studio product-photo lighting"
@@ -139,7 +140,8 @@ STYLE_PRESETS = {
         "description": "Funko Pop vinyl bobblehead figure style - good for a cute, big-head collectible toy look.",
         "style_prompt": (
             "Funko Pop vinyl figure style, oversized rounded head with simplified "
-            "black dot eyes, small chibi-proportioned body, glossy vinyl toy "
+            "black dot eyes, vinyl skin matching the subject's real skin tone, "
+            "small chibi-proportioned body, glossy vinyl toy "
             "texture, small collectible-figure display base beneath the feet, "
             "studio product photography lighting"
         ),

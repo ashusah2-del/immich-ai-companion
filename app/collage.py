@@ -40,6 +40,22 @@ def _crop_to_face(img, w, h, face_box, target_face_frac=0.34):
         crop_w = src_w
         crop_h = crop_w * h / w
 
+    # If the face sits near an image edge, a max-size crop can't center it,
+    # and in a shaped frame (heart, star, circle...) the face then lands in
+    # the silhouette's clipped margin. Prefer zooming in: shrink the crop to
+    # the largest size that still lets the face sit centered horizontally
+    # and at the 0.42 vertical anchor - but never so tight that the face
+    # fills more than ~60% of the crop height.
+    centerable_h = min(
+        face_cy / 0.42 if face_cy > 0 else crop_h,
+        (src_h - face_cy) / 0.58,
+        2 * min(face_cx, src_w - face_cx) * h / w,
+    )
+    fit_h = max(face_h / 0.6, min(crop_h, centerable_h))
+    if fit_h < crop_h:
+        crop_h = fit_h
+        crop_w = crop_h * w / h
+
     left = min(max(face_cx - crop_w / 2, 0), src_w - crop_w)
     top = min(max(face_cy - crop_h * 0.42, 0), src_h - crop_h)
 

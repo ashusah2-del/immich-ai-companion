@@ -235,6 +235,30 @@ def get_face_box(asset_id, person_id=None):
     return (x1, y1, x2, y2)
 
 
+def get_all_face_boxes(asset_id):
+    """Return every face Immich detected in the asset as a list of
+    (x1, y1, x2, y2) 0-1 fraction boxes - including unrecognized bystanders,
+    unlike get_face_box. Used to shield face regions from SDXL restyling
+    (see comfyui_client.design_image): an AI-redrawn face looks wrong no
+    matter whose it is."""
+    resp = requests.get(
+        f"{config.IMMICH_BASE_URL}/api/faces",
+        headers=_headers(),
+        params={"id": asset_id},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return [
+        (
+            f["boundingBoxX1"] / f["imageWidth"],
+            f["boundingBoxY1"] / f["imageHeight"],
+            f["boundingBoxX2"] / f["imageWidth"],
+            f["boundingBoxY2"] / f["imageHeight"],
+        )
+        for f in resp.json()
+    ]
+
+
 def download_original(asset_id):
     resp = requests.get(
         f"{config.IMMICH_BASE_URL}/api/assets/{asset_id}/original",
