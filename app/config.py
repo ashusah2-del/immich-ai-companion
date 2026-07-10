@@ -78,12 +78,15 @@ DESIGN_CODEFORMER_WEIGHT = float(os.environ.get("AIENH_DESIGN_CODEFORMER_WEIGHT"
 # waxy at photo resolution.
 DESIGN_FACE_BOOST = os.environ.get("AIENH_DESIGN_FACE_BOOST", "true").lower() in ("1", "true", "yes")
 DESIGN_FACE_BOOST_MODEL = os.environ.get("AIENH_DESIGN_FACE_BOOST_MODEL", "GFPGANv1.4.pth")
-# Shield every Immich-detected face region from SDXL denoising entirely
-# (latent noise mask, see comfyui_client._face_shield_mask_bytes) so faces
-# keep their original photographic features while the rest restyles - the
-# ReActor swap alone couldn't preserve likeness for every person in a group
-# photo.
-DESIGN_PROTECT_FACES = os.environ.get("AIENH_DESIGN_PROTECT_FACES", "true").lower() in ("1", "true", "yes")
+# Optionally shield every Immich-detected face region from SDXL denoising
+# entirely (latent noise mask, see comfyui_client._face_shield_mask_bytes) so
+# faces keep their exact photographic pixels. OFF by default: for generative
+# styles (design restyles, portrait_3d, figurine_3d) the user wants creative
+# liberty - faces should *match* the person without distortion (the
+# multi-face ReActor swap + FaceBoost handles that), not stay literal photo
+# cutouts. Strict preservation only applies to the non-generative workers
+# (filters, collages, restore), which never redraw faces in the first place.
+DESIGN_PROTECT_FACES = os.environ.get("AIENH_DESIGN_PROTECT_FACES", "false").lower() in ("1", "true", "yes")
 # How much each face box grows before masking (fraction of the box's own
 # width/height per side) and how far the mask edge feathers (px at 1024px
 # mask scale) so shielded faces blend into the restyled surroundings.
